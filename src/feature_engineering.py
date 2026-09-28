@@ -1,66 +1,46 @@
-# src/feature_engineering.py
-
 import pandas as pd
 import numpy as np
 
-def generate_sample_data() -> pd.DataFrame:
+def generate_sample_sales_data():
     """
-    生成一份用于演示的供应链历史销量模拟数据
+    生成模拟的供应链多仓库、多 SKU 历史销量数据集
     """
     np.random.seed(42)
-    date_range = pd.date_range(start="2026-01-01", periods=60, freq="D")
+    date_range = pd.date_range(start="2026-01-01", end="2026-06-30", freq="D")
+    warehouses = ["WH_North", "WH_South", "WH_East"]
+    skus = ["SKU_001", "SKU_002", "SKU_003"]
     
     data = []
-    # 假设有两个仓库、两个 SKU
-    warehouses = ["WH_North", "WH_South"]
-    skus = ["SKU_001", "SKU_002"]
-    
     for wh in warehouses:
         for sku in skus:
-            # 基础销量 + 随机波动
-            base_sales = np.random.randint(30, 80)
-            sales_series = base_sales + np.random.poisson(lam=5, size=len(date_range))
+            # 基础销量加一些随机波动与周期性
+            base_sales = np.random.randint(50, 150)
+            noise = np.random.normal(0, 10, len(date_range))
+            sales = base_sales + noise + 5 * np.sin(np.arange(len(date_range)) * 2 * np.pi / 7)
+            sales = np.clip(sales, 10, None).astype(int)
             
-            for date, sales in zip(date_range, sales_series):
+            for date, qty in zip(date_range, sales):
                 data.append({
                     "date": date,
                     "warehouse_id": wh,
                     "sku_id": sku,
-                    "sales": int(sales)
+                    "sales_qty": qty
                 })
                 
     df = pd.DataFrame(data)
     return df
 
-def create_time_series_features(df: pd.DataFrame) -> pd.DataFrame:
+def process_sales_features(df: pd.DataFrame) -> pd.DataFrame:
     """
-    为历史销量数据构建时间序列特征（滞后特征与滚动均值）
+    时间序列特征工程：按仓库和SKU分组计算滞后特征与滚动均值
     """
-    df['date'] = pd.to_datetime(df['date'])
-    # 按仓库和SKU分组排序
-    df = df.sort_values(by=['warehouse_id', 'sku_id', 'date']).reset_index(drop=True)
+    df = df.sort_values(by=["warehouse_id", "sku_id", "date"])
     
-    # 1. 滞后特征 (Lag Features)：前1天销量、前7天销量
-    df['lag_1'] = df.groupby(['warehouse_id', 'sku_id'])['sales'].shift(1)
-    df['lag_7'] = df.groupby(['warehouse_id', 'sku_id'])['sales'].shift(7)
-    
-    # 2. 滚动统计特征 (Rolling Features)：过去7天的平均销量
+    # 计算 7 天滞后特征与 7 天移动平均滚动特征
+    df['lag_1'] = df.groupby(['warehouse_id', 'sku_id'])['sales_qty'].shift(1)
     df['rolling_mean_7'] = (
-        df.groupby(['warehouse_id', 'sku_id'])['sales']
-        .transform(lambda x: x.rolling(window=7).mean())
+        df.groupby(['warehouse_id', 'sku_id'])['sales_qty']
+        .transform(lambda x: x.rolling(window=7, min_periods=1).mean())
     )
     
-    # 丢弃因计算滞后/滚动而产生的空值行
-    df_cleaned = df.dropna().reset_index(drop=True)
-    return df_cleaned
-
-if __name__ == "__main__":
-    print("正在生成模拟销量数据...")
-    raw_df = generate_sample_data()
-    print(f"原始数据行数: {len(raw_df)}")
-    
-    print("正在提取时间序列特征...")
-    processed_df = create_time_series_features(raw_df)
-    print(f"特征工程处理后的数据行数: {len(processed_df)}")
-    print("特征数据预览：")
-    print(processed_df.head())
+    return df
